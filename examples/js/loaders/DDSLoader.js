@@ -72,9 +72,9 @@ THREE.DDSLoader.parse = function ( buffer, loadMipmaps ) {
 
 	}
 
-	function loadARGBMip( buffer, dataOffset, width, height ) {
+	function loadARGBMip( buffer, dataOffset, width, height, alphaMask ) {
 
-		var dataLength = width * height * 4;
+		var dataLength = width * height * (alphaMask ? 4 : 3);
 		var srcBuffer = new Uint8Array( buffer, dataOffset, dataLength );
 		var byteArray = new Uint8Array( dataLength );
 		var dst = 0;
@@ -86,11 +86,40 @@ THREE.DDSLoader.parse = function ( buffer, loadMipmaps ) {
 				var b = srcBuffer[ src ]; src ++;
 				var g = srcBuffer[ src ]; src ++;
 				var r = srcBuffer[ src ]; src ++;
-				var a = srcBuffer[ src ]; src ++;
+				if ( alphaMask ) {
+					var a = srcBuffer[ src ]; src ++;
+				}
 				byteArray[ dst ] = r; dst ++;	//r
 				byteArray[ dst ] = g; dst ++;	//g
 				byteArray[ dst ] = b; dst ++;	//b
-				byteArray[ dst ] = a; dst ++;	//a
+				if ( alphaMask ) {
+					byteArray[ dst ] = a; dst ++;	//a
+				}
+
+			}
+
+		}
+		return byteArray;
+
+	}
+
+	function loadLAMip( buffer, dataOffset, width, height, alphaMask ) {
+
+		var dataLength = width * height * (alphaMask ? 2 : 1);
+		var srcBuffer = new Uint8Array( buffer, dataOffset, dataLength );
+		var byteArray = new Uint8Array( dataLength );
+		var dst = 0;
+		var src = 0;
+		for ( var y = 0; y < height; y ++ ) {
+
+			for ( var x = 0; x < width; x ++ ) {
+
+				var r = srcBuffer[ src ]; src ++;
+				if ( alphaMask ) {
+					var a = srcBuffer[ src ]; src ++;
+					byteArray[ dst ] = a; dst ++;
+				}
+				byteArray[ dst ] = r; dst ++;
 
 			}
 
@@ -151,7 +180,11 @@ THREE.DDSLoader.parse = function ( buffer, loadMipmaps ) {
 
 	var fourCC = header[ off_pfFourCC ];
 
-	var isRGBAUncompressed = false;
+	var isRGBAUncompressed	= false;
+	var isRGBUncompressed	= false;
+	var isLAUncompressed	= false;
+	var isLUncompressed		= false;
+	var isAUncompressed		= false;
 
 	switch ( fourCC ) {
 
@@ -179,11 +212,63 @@ THREE.DDSLoader.parse = function ( buffer, loadMipmaps ) {
 				&& header[ off_RBitMask ] & 0xff0000
 				&& header[ off_GBitMask ] & 0xff00
 				&& header[ off_BBitMask ] & 0xff
-				&& header[ off_ABitMask ] & 0xff000000  ) {
+				&& header[ off_ABitMask ] & 0xff000000 ) {
 
 				isRGBAUncompressed = true;
 				blockBytes = 64;
 				dds.format = THREE.RGBAFormat;
+
+			} else if ( header[ off_RGBBitCount ] === 24
+				&& header[ off_RBitMask ] & 0xff0000
+				&& header[ off_GBitMask ] & 0xff00
+				&& header[ off_BBitMask ] & 0xff
+				&& header[ off_ABitMask ] === 0 ) {
+
+				isRGBUncompressed = true;
+				blockBytes = 48;
+				dds.format = THREE.RGBFormat;
+
+			} else if ( header[ off_RGBBitCount ] === 16 ) {
+
+				blockBytes = 32;
+
+				if ( header[ off_GBitMask ] & 0x7e0 ) {
+
+					isRGBUncompressed = true;
+					dds.format = THREE.RGBFormat;
+
+				} else if ( header[ off_GBitMask ] & 0xf0 ) {
+
+					isRGBAUncompressed = true;
+					dds.format = THREE.RGBAFormat;
+
+				} else if ( header[ off_GBitMask ] & 0x3e0 ) {
+
+					isRGBAUncompressed = true;
+					dds.format = THREE.RGBAFormat;
+
+				} else if ( header[ off_GBitMask ] === 0 ) {
+
+					isLAUncompressed = true;
+					dds.format = THREE.LuminanceAlphaFormat;
+
+				}
+
+			} else if ( header[ off_RGBBitCount ] === 8 ) {
+
+				blockBytes = 24;
+
+				if ( header[ off_ABitMask ] > 0 ) {
+
+					isAUncompressed = true;
+					dds.format = THREE.AlphaFormat;
+
+				} else if ( header[ off_ABitMask ] === 0 ) {
+
+					isLUncompressed = true;
+					dds.format = THREE.LuminanceFormat;
+
+				}
 
 			} else {
 
@@ -233,9 +318,14 @@ THREE.DDSLoader.parse = function ( buffer, loadMipmaps ) {
 
 		for ( var i = 0; i < dds.mipmapCount; i ++ ) {
 
-			if ( isRGBAUncompressed ) {
+			if ( isRGBAUncompressed || isRGBUncompressed ) {
 
-				var byteArray = loadARGBMip( buffer, dataOffset, width, height );
+				var byteArray = loadARGBMip( buffer, dataOffset, width, height, isRGBAUncompressed );
+				var dataLength = byteArray.length;
+
+			} else if ( isLAUncompressed || isLUncompressed || isAUncompressed ) {
+
+				var byteArray = loadLAMip( buffer, dataOffset, width, height, isLAUncompressed );
 				var dataLength = byteArray.length;
 
 			} else {
